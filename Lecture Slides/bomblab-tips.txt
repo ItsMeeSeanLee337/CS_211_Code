@@ -1,0 +1,251 @@
+Tips for the Bomb Squad
+=======================
+
+When you obtain your bomb, it will come with a few files. The bomb itself is an executable
+program named "bomb". There is also "bomb.c", which is partial source code for the bomb.
+You can look through bomb.c to see the large-scale structure of the bomb: it repeatedly
+prints a prompt to the screen, reads a string from standard input, and then passes that
+string to a function named phase_N, for some N.
+
+The C source code for the phases is not included with your assignment, but it is still
+possible to deduce how those functions work by examining the actual instructions.
+
+One way to get the instructions is to use objdump to disassemble the bomb:
+
+    $ objdump -d bomb
+
+This will convert all the machine code in bomb into assembly code. This will naturally
+include all nine phases, as well as all the underlying functions they use. (If you have
+ever wondered what printf looks like at the machine level, this is your chance.) This is
+far too much information to take in at once, but it isn't a bad idea to save this to a
+file for later reference.
+
+    $ objdump -d bomb > bomb.dump
+
+If you like, you can extract the code from the various phases into text files and then
+use your preferred text editor to add notes and comments.
+
+
+Using GDB
+---------
+
+There are links to a few useful resources about GDB on Sakai. In particular, it is worth
+bookmarking the GDB manual and looking through it for useful tools.
+
+GDB lets us control the execution of the bomb and observe its data while it executes.
+Normally, you can step through a program line by line and directly query the values of
+variables, but that requires the program to be compiled with debugging support. (That is,
+using -g.) Even without this support, we can still use gdb to execute our program one
+instruction at a time and observe the contents of the registers and memory.
+
+To get started, call gdb from the command line and tell it we want to debug the bomb:
+
+    $ gdb bomb
+
+This starts GDB. You may get a message about missing debugger information, but that is
+expected. 
+
+Note that the bomb has not started yet. This gives you an opportunity to do any initial
+set up, like setting breakpoints.
+
+A breakpoint tells GDB to halt the execution of your program when it reaches a particular
+instruction. Since bomb was not compiled with debugger support, we can't specify break
+points by line number, but we can still use labels or instruction addresses.
+
+For example, to stop execution at the start of function phase_1, use:
+
+    (gdb) break phase_1
+
+Note that most GDB commands can be abbreviated. For break, it is sufficient to type "b".
+
+    (gdb) b phase_1
+
+Note that this will halt execution *before* the first instruction in the function.
+
+Setting breakpoints inside functions is also possible, if you know the address of the
+specific instruction. You can find these by using "disassemble" (or "disas").
+
+    (gdb) disas phase_1
+    Dump of assembler code for function phase_1:
+    => 0x08048bd0 <+0>:     sub    $0x2c,%esp
+       0x08048bd3 <+3>:     movl   $0x0,0x1c(%esp)
+       0x08048bdb <+11>:    lea    0x1c(%esp),%eax
+       0x08048bdf <+15>:    mov    %eax,0x8(%esp)
+    ...
+
+Among other things, this tells us the address of each instruction. To set a breakpoint
+before that second mov, we can do:
+
+    (gdb) b *0x08048bdf
+
+Note the asterisk. Without it, GDB will interpret that number as a line and not an
+address.
+
+Use "info breakpoints" to get information about all breakpoints. You can use enable and
+disable to activate and deactivate breakpoints, if desired.
+
+
+To start your program, use "run" (or "r"). This starts your program executing until it
+either terminates or reaches a breakpoint.
+
+    (gdb) run
+    (gdb) r
+
+If you are debugging a program that takes its own arguments, you can provide them after
+run. So, if you have a partial solution in a file called "psol.txt", you can tell the bomb
+to read inputs from it like so:
+
+    (gdb) r psol.txt
+
+You could also use < to read input from a file, but giving the bomb a file name works
+better with partial solutions, because the bomb switches to reading from standard input
+once it uses all the codes in the partial solution.
+
+
+Observing program state
+-----------------------
+
+When you are paused at a breakpoint, you can get information about the current registers
+and the contents of memory. The command "print" (or "p") takes an expression and prints
+its value. We can use this to get the values for individual registers.
+
+    (gdb) p $eax
+    $1 = 134535168
+
+The $ is how GDB identifies its own variables. It pre-defines a variable for each register
+and defines a new variable each time something is printed. Note that $1 will be the actual
+number printed; it will stay the same until we exit GDB, regardless of changes to $eax.
+
+We can use print to do some simple arithmetic for us.
+
+    (gdb) p $eax + 1
+    $2 = 134535169
+    (gdb) p $eax & 0xFFFF
+    $3 = 55296
+
+We can also specify how to print values, using formatting codes. For example,
+
+    (gdb) p/x $eax
+    $4 = 0x804d800
+    (gdb) p/x $eax & 0xFFF
+    $5 = 0xd800
+    
+See https://sourceware.org/gdb/onlinedocs/gdb/Output-Formats.html for the full list of
+output formats. Useful ones for us include:
+
+    x   hexadecimal
+    d   signed decimal
+    u   unsigned decimal
+    t   binary
+    c   character
+    a   address (both as hex and as an offset from the nearest label)
+
+It is possible to use print to get values in memory, but without type information it will
+usually be easier to use "examine" (or "x"). Unlike registers, data in memory is not
+fixed-size, so you must specify how many bytes to read in addition to its format.
+Formatting codes for examine have three parts: the number of data items to read, the size
+of each item, and the printing format. For example, if my_array is a label for a global
+array of five ints, we could use:
+
+    (gdb) x/5wd my_array
+
+Here, we specify the number of things to print (5), the size of each thing (w = 4-bytes),
+and the format to use (d = signed decimal). All three parts of the code are optional; GDB
+will use sensible defaults and remembers the last formatting code you used.
+
+It may be helpful to bookmark https://sourceware.org/gdb/onlinedocs/gdb/Memory.html and
+keep a tab open in the background.
+
+The size codes are:
+
+    b   byte
+    h   half-word (2 bytes)
+    w   word (4 bytes)
+    g   giant word (8 bytes)
+
+Note that GDB uses "word" to mean 4 bytes. In contrast, the AT&T syntax for IA32 uses
+"word" to mean 2 bytes.
+
+The formats include those used by print, along with:
+
+    i   instruction
+    s   string
+    
+Each format has a default size that is used if no size is given.
+
+So, if %eax contains the address of a string, we could use
+
+    (gdb) x/s $eax
+
+Alternately, we could print exactly 5 characters starting at that address:
+
+    (gdb) x/5c $eax
+
+Or, we could print the bytes as hex values:
+
+    (gdb) x/5bx $eax
+
+Finally, "info registers" will print all the registers at once.
+
+Stepping through the program
+----------------------------
+
+GDB includes the usual commands "next" and "step", but these are only useful for programs
+compiled with debugging information. Instead, use "ni" (next instruction) and "si" (step
+instruction). These each advance one instruction, but si will step into function calls
+while ni will break at the next instruction in the current function. (You will usually
+want ni, as observing the internals of sscanf will rarely be informative.)
+
+Use "continue" or "c" to resume execution. This will halt again at the next breakpoint.
+
+Note that disas will use => to indicate where the program is paused. This indicates the
+next instruction that will be executed.
+
+You may find it helpful to have GDB print the next instruction each time the program
+pauses. To do this, use this command:
+
+    (gdb) set disassemble-next-line on
+
+This makes it easier to keep track of where you are when stepping.
+
+If you frequently stop at a particular breakpoint and want to see a particular value, you
+can use display to automatically print that value each time the program pauses.
+
+    (gdb) display $eax
+
+This can be given format codes, like p or x. If the format code includes a size letter,
+then the argument is interpreted as an address and the value of memory at that location
+will be printed.
+
+If you don't want to enter "set disassemble-next-line on" each time you start GDB, create
+a file named ".gdbinit" in the same directory as "bomb" and put the command there. GDB
+will execute each of the commands in that file when it starts. This is also be useful if
+there are certain breakpoints that you want to set every time you start the bomb.
+
+
+General advice
+--------------
+
+Examining a program step-by-step can be overwhelming. Use the code you get from objdump or
+gdb to try to discern the structure of your functions. Where are the loops? Where are the
+if-statements? Print out your code and draw arrows. Put code fragments on index cards and
+connect them with yarn. You can find the solution faster if you understand what the code
+is doing at a higher level than just "move this value from memory to a register".
+
+Note every time your program reads from the stack. Are these parameters to the function?
+Local variables? Parameters being passed to the next function? Draw diagrams and take
+notes.
+
+If you can't remember how to use a command, type "help" and then the name of the command.
+If you can't remember what a command was called, type "help" and look through the list for
+anything familiar.
+
+Beware of "d"! This is the delete command, and it is easy to accidentally delete a
+breakpoint. If you enter "d" with no arguments, it will delete all your breakpoints!
+
+Take an few minutes to browse through the GDB manual. There are a lot of powerful features
+that I haven't addressed here, such as conditional breakpoints and watchpoints.
+
+Many terminals have a single keyboard shortcut for "copy the current selection and paste".
+This is handy when you have just printed out the address of a memory location you want to
+examine.
